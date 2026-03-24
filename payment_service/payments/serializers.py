@@ -13,34 +13,34 @@ class PaymentSerializer(serializers.ModelSerializer):
         source='get_type_display',
         read_only=True
     )
+    bank_status_display = serializers.SerializerMethodField()
+    bank_paid_at_display = serializers.DateTimeField(
+        source='bank_paid_at',
+        format='%d.%m.%Y %H:%M:%S',
+        read_only=True,
+        allow_null=True
+    )
 
     class Meta:
         model = Payment
         fields = [
             'id', 'order', 'amount', 'type', 'type_display',
             'status', 'status_display', 'bank_payment_id',
+            'bank_status', 'bank_status_display', 'bank_amount',
+            'bank_paid_at', 'bank_paid_at_display',
             'created_at', 'updated_at'
         ]
         read_only_fields = [
-            'status',
-            'bank_payment_id',
-            'created_at',
-            'updated_at'
+            'status', 'bank_payment_id', 'bank_status',
+            'bank_amount', 'bank_paid_at',
+            'created_at', 'updated_at'
         ]
 
-    def validate(self, data):
-        order = data['order']
-        amount = data['amount']
-
-        total_paid = order.payments.filter(
-            status__in=[Payment.Status.COMPLETED, Payment.Status.REFUNDED]
-        ).aggregate(total=models.Sum('amount'))['total'] or 0
-
-        if total_paid + amount > order.amount:
-            raise serializers.ValidationError(
-                'Общая сумма платежей превысит сумму заказа'
-            )
-        return data
+    def get_bank_status_display(self, obj):
+        status = obj.bank_status
+        if not status:
+            return 'Не синхронизирован'
+        return status.capitalize()
 
 
 class OrderSerializer(serializers.ModelSerializer):

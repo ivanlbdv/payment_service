@@ -2,6 +2,7 @@ import requests
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 
 
 class Order(models.Model):
@@ -72,6 +73,18 @@ class Payment(models.Model):
         null=True,
         help_text="Последняя синхронизация статуса с банком"
     )
+    bank_amount = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        blank=True,
+        null=True,
+        help_text="Сумма платежа в системе банка"
+    )
+    bank_paid_at = models.DateTimeField(
+        blank=True,
+        null=True,
+        help_text="Дата и время оплаты в системе банка"
+    )
 
     def clean(self):
         super().clean()
@@ -92,7 +105,7 @@ class Payment(models.Model):
     def _call_bank_api_acquiring_start(self):
         try:
             response = requests.post(
-                'https://bank.api/acquiring_start',
+                'http://bank.api/acquiring_start',
                 json={
                     'order_id': self.order.id,
                     'amount': float(self.amount)
@@ -109,6 +122,22 @@ class Payment(models.Model):
         except requests.exceptions.RequestException as e:
             return {'success': False, 'error': str(e)}
 
+    def _call_bank_api_refund(self):
+        """Вызов API банка для возврата платежа"""
+        if not self.bank_payment_id:
+            return {'success': False, 'error': 'Нет ID платежа в банке'}
+
+        try:
+            response = requests.post(
+                'http://bank.api/acquiring_refund',
+                json={'payment_id': self.bank_payment_id},
+                timeout=30
+            )
+            response.raise_for_status()
+            return {'success': True}
+        except requests.exceptions.RequestException as e:
+            return {'success': False, 'error': str(e)}
+
     def _check_bank_payment_status(self):
         """Проверка статуса платежа в банке через acquiring_check"""
         if not self.bank_payment_id:
@@ -116,25 +145,44 @@ class Payment(models.Model):
 
         try:
             response = requests.get(
-                f'https://bank.api/acquiring_check?payment_id={self.bank_payment_id}',
+                f'http://bank.api/acquiring_check?payment_id={self.bank_payment_id}',
                 timeout=30
             )
             response.raise_for_status()
             data = response.json()
 
             self.bank_status = data.get('status')
+            self.bank_amount = data.get('amount')
+
+            bank_paid_at_str = data.get('paid_at')
+            if bank_paid_at_str:
+                self.bank_paid_at = parse_datetime(bank_paid_at_str)
+
             self.last_synced_at = timezone.now()
-            self.save(update_fields=['bank_status', 'last_synced_at'])
+
+            self.save(update_fields=[
+                'bank_status',
+                'bank_amount',
+                'bank_paid_at',
+                'last_synced_at'
+            ])
 
             return data
         except requests.exceptions.RequestException as e:
             print(f'Ошибка при проверке статуса платежа {self.id}: {str(e)}')
+            return None
+        except (KeyError, ValueError, TypeError) as e:
+            print(f'Ошибка парсинга ответа банка для платежа {self.id}: {str(e)}')
             return None
 
     def sync_with_bank(self):
         """Синхронизация статуса с банком и обновление локального статуса"""
         bank_data = self._check_bank_payment_status()
         if not bank_data:
+            if self.status not in [self.Status.FAILED, self.Status.REFUNDED]:
+                self.status = self.Status.FAILED
+                self.save()
+                self.order.update_status()
             return False
 
         if bank_data['status'] == 'completed' and self.status != self.Status.COMPLETED:
@@ -145,6 +193,10 @@ class Payment(models.Model):
             self.status = self.Status.FAILED
             self.save()
             self.order.update_status()
+
+        if self.bank_amount is not None and self.bank_amount != self.amount:
+            print(f"Предупреждение: расхождение сумм для платежа {self.id}. "
+                  f"Локальная: {self.amount}, в банке: {self.bank_amount}")
 
         return True
 
@@ -160,14 +212,31 @@ class Payment(models.Model):
                 raise Exception(
                     f'Ошибка создания платежа в банке: {bank_response["error"]}'
                 )
+        elif self.type == self.Type.CASH:
+            self.status = self.Status.COMPLETED
+            self.bank_status = 'completed'
+            self.bank_amount = self.amount
+            self.bank_paid_at = timezone.now()
+            self.last_synced_at = timezone.now()
+            self.save(update_fields=[
+                'status', 'bank_status', 'bank_amount',
+                'bank_paid_at', 'last_synced_at'
+            ])
+        else:
+            raise ValueError(f'Неподдерживаемый тип платежа: {self.type}')
 
-        self.status = self.Status.COMPLETED
-        self.save()
         self.order.update_status()
 
     def refund(self):
         if self.status != self.Status.COMPLETED:
             raise ValueError('Можно вернуть только завершенные платежи')
+
+        if self.type == self.Type.ACQUIRING and self.bank_payment_id:
+            bank_response = self._call_bank_api_refund()
+            if not bank_response['success']:
+                raise Exception(
+                    f'Ошибка возврата платежа в банке: {bank_response["error"]}'
+                )
 
         self.status = self.Status.REFUNDED
         self.save()

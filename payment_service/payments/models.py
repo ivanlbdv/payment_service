@@ -1,6 +1,7 @@
 import requests
 from django.core.exceptions import ValidationError
 from django.db import models
+from django.utils import timezone
 
 
 class Order(models.Model):
@@ -60,6 +61,17 @@ class Payment(models.Model):
     bank_payment_id = models.CharField(max_length=100, blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    bank_status = models.CharField(
+        max_length=20,
+        blank=True,
+        null=True,
+        help_text="Статус платежа в системе банка"
+    )
+    last_synced_at = models.DateTimeField(
+        blank=True,
+        null=True,
+        help_text="Последняя синхронизация статуса с банком"
+    )
 
     def clean(self):
         super().clean()
@@ -77,30 +89,6 @@ class Payment(models.Model):
                 'Общая сумма платежей превышает сумму заказа'
             )
 
-    def deposit(self):
-        if self.status != self.Status.PENDING:
-            raise ValueError('Платеж уже обработан')
-
-        if self.type == self.Type.ACQUIRING:
-            bank_response = self._call_bank_api_acquiring_start()
-            if not bank_response['success']:
-                self.status = self.Status.FAILED
-                self.save()
-                raise Exception(f'Ошибка создания платежа в банке: {bank_response["error"]}')
-            self.bank_payment_id = bank_response['payment_id']
-
-        self.status = self.Status.COMPLETED
-        self.save()
-        self.order.update_status()
-
-    def refund(self):
-        if self.status != self.Status.COMPLETED:
-            raise ValueError('Можно вернуть только завершенные платежи')
-
-        self.status = self.Status.REFUNDED
-        self.save()
-        self.order.update_status()
-
     def _call_bank_api_acquiring_start(self):
         try:
             response = requests.post(
@@ -113,9 +101,77 @@ class Payment(models.Model):
             )
             response.raise_for_status()
             data = response.json()
+            self.bank_payment_id = data['payment_id']
+            self.bank_status = 'pending'
+            self.last_synced_at = timezone.now()
+            self.save(update_fields=['bank_payment_id', 'bank_status', 'last_synced_at'])
             return {'success': True, 'payment_id': data['payment_id']}
         except requests.exceptions.RequestException as e:
             return {'success': False, 'error': str(e)}
+
+    def _check_bank_payment_status(self):
+        """Проверка статуса платежа в банке через acquiring_check"""
+        if not self.bank_payment_id:
+            return None
+
+        try:
+            response = requests.get(
+                f'https://bank.api/acquiring_check?payment_id={self.bank_payment_id}',
+                timeout=30
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            self.bank_status = data.get('status')
+            self.last_synced_at = timezone.now()
+            self.save(update_fields=['bank_status', 'last_synced_at'])
+
+            return data
+        except requests.exceptions.RequestException as e:
+            print(f'Ошибка при проверке статуса платежа {self.id}: {str(e)}')
+            return None
+
+    def sync_with_bank(self):
+        """Синхронизация статуса с банком и обновление локального статуса"""
+        bank_data = self._check_bank_payment_status()
+        if not bank_data:
+            return False
+
+        if bank_data['status'] == 'completed' and self.status != self.Status.COMPLETED:
+            self.status = self.Status.COMPLETED
+            self.save()
+            self.order.update_status()
+        elif bank_data['status'] == 'failed' and self.status not in [self.Status.FAILED, self.Status.REFUNDED]:
+            self.status = self.Status.FAILED
+            self.save()
+            self.order.update_status()
+
+        return True
+
+    def deposit(self):
+        if self.status != self.Status.PENDING:
+            raise ValueError('Платеж уже обработан')
+
+        if self.type == self.Type.ACQUIRING:
+            bank_response = self._call_bank_api_acquiring_start()
+            if not bank_response['success']:
+                self.status = self.Status.FAILED
+                self.save()
+                raise Exception(
+                    f'Ошибка создания платежа в банке: {bank_response["error"]}'
+                )
+
+        self.status = self.Status.COMPLETED
+        self.save()
+        self.order.update_status()
+
+    def refund(self):
+        if self.status != self.Status.COMPLETED:
+            raise ValueError('Можно вернуть только завершенные платежи')
+
+        self.status = self.Status.REFUNDED
+        self.save()
+        self.order.update_status()
 
     def __str__(self):
         return f'Payment {self.id} - {self.amount} - {self.get_status_display()}'

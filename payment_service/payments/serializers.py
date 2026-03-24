@@ -20,6 +20,7 @@ class PaymentSerializer(serializers.ModelSerializer):
         read_only=True,
         allow_null=True
     )
+    sync_error = serializers.SerializerMethodField()
 
     class Meta:
         model = Payment
@@ -28,13 +29,19 @@ class PaymentSerializer(serializers.ModelSerializer):
             'status', 'status_display', 'bank_payment_id',
             'bank_status', 'bank_status_display', 'bank_amount',
             'bank_paid_at', 'bank_paid_at_display',
-            'created_at', 'updated_at'
+            'created_at', 'updated_at', 'sync_error'
         ]
         read_only_fields = [
             'status', 'bank_payment_id', 'bank_status',
             'bank_amount', 'bank_paid_at',
             'created_at', 'updated_at'
         ]
+
+    def get_sync_error(self, obj):
+        """Возвращает последнюю ошибку синхронизации, если есть"""
+        if obj.bank_status == 'error' and obj.status == Payment.Status.FAILED:
+            return 'Ошибка синхронизации с банком: платеж не найден'
+        return None
 
     def get_bank_status_display(self, obj):
         status = obj.bank_status

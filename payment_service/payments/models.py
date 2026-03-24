@@ -141,13 +141,25 @@ class Payment(models.Model):
     def _check_bank_payment_status(self):
         """Проверка статуса платежа в банке через acquiring_check"""
         if not self.bank_payment_id:
-            return None
+            return {
+                'success': False,
+                'error': 'Нет ID платежа в банке',
+                'bank_error_type': 'missing_payment_id'
+            }
 
         try:
             response = requests.get(
                 f'http://bank.api/acquiring_check?payment_id={self.bank_payment_id}',
                 timeout=30
             )
+
+            if response.status_code == 404:
+                return {
+                    'success': False,
+                    'error': 'Платеж не найден в системе банка',
+                    'bank_error_type': 'payment_not_found'
+                }
+
             response.raise_for_status()
             data = response.json()
 
@@ -167,38 +179,67 @@ class Payment(models.Model):
                 'last_synced_at'
             ])
 
-            return data
+            return {
+                'success': True,
+                'data': data
+            }
         except requests.exceptions.RequestException as e:
-            print(f'Ошибка при проверке статуса платежа {self.id}: {str(e)}')
-            return None
+            return {
+                'success': False,
+                'error': f'Ошибка связи с банком: {str(e)}',
+                'bank_error_type': 'connection_error'
+            }
         except (KeyError, ValueError, TypeError) as e:
-            print(f'Ошибка парсинга ответа банка для платежа {self.id}: {str(e)}')
-            return None
+            return {
+                'success': False,
+                'error': f'Ошибка парсинга ответа банка: {str(e)}',
+                'bank_error_type': 'parsing_error'
+            }
 
     def sync_with_bank(self):
         """Синхронизация статуса с банком и обновление локального статуса"""
         bank_data = self._check_bank_payment_status()
-        if not bank_data:
+
+        if not bank_data['success']:
+            error_message = bank_data['error']
+
+            self.bank_status = 'error'
+            self.last_synced_at = timezone.now()
+            self.save(update_fields=['bank_status', 'last_synced_at'])
+
             if self.status not in [self.Status.FAILED, self.Status.REFUNDED]:
                 self.status = self.Status.FAILED
                 self.save()
                 self.order.update_status()
-            return False
 
-        if bank_data['status'] == 'completed' and self.status != self.Status.COMPLETED:
+            return {
+                'synced': False,
+                'error': error_message,
+                'bank_error_type': bank_data.get('bank_error_type')
+            }
+
+        data = bank_data['data']
+        status_changed = False
+
+        if data['status'] == 'completed' and self.status != self.Status.COMPLETED:
             self.status = self.Status.COMPLETED
-            self.save()
-            self.order.update_status()
-        elif bank_data['status'] == 'failed' and self.status not in [self.Status.FAILED, self.Status.REFUNDED]:
+            status_changed = True
+        elif data['status'] == 'failed' and self.status not in [self.Status.FAILED, self.Status.REFUNDED]:
             self.status = self.Status.FAILED
+            status_changed = True
+
+        if status_changed:
             self.save()
             self.order.update_status()
 
         if self.bank_amount is not None and self.bank_amount != self.amount:
-            print(f"Предупреждение: расхождение сумм для платежа {self.id}. "
-                  f"Локальная: {self.amount}, в банке: {self.bank_amount}")
+            print(f'Предупреждение: расхождение сумм для платежа {self.id}. '
+                f'Локальная: {self.amount}, в банке: {self.bank_amount}')
 
-        return True
+        return {
+            'synced': True,
+            'data': data
+        }
 
     def deposit(self):
         if self.status != self.Status.PENDING:

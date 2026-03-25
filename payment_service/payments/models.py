@@ -17,11 +17,16 @@ class Order(models.Model):
         PARTIALLY_PAID = 'partially_paid', 'Частично оплачен'
         PAID = 'paid', 'Оплачен'
 
-    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    amount = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        verbose_name='Сумма'
+    )
     status = models.CharField(
         max_length=20,
         choices=PaymentStatus.choices,
-        default=PaymentStatus.UNPAID
+        default=PaymentStatus.UNPAID,
+        verbose_name='Статус'
     )
 
     def update_status(self):
@@ -37,6 +42,10 @@ class Order(models.Model):
             self.status = self.PaymentStatus.UNPAID
 
         self.save()
+
+    class Meta:
+        verbose_name = 'Заказ'
+        verbose_name_plural = 'Заказы'
 
     def __str__(self):
         return f'Order {self.id} - {self.get_status_display()}'
@@ -62,40 +71,65 @@ class Payment(models.Model):
     order = models.ForeignKey(
         Order,
         on_delete=models.CASCADE,
-        related_name='payments'
+        related_name='payments',
+        verbose_name='Заказ'
     )
-    amount = models.DecimalField(max_digits=10, decimal_places=2)
-    type = models.CharField(max_length=20, choices=Type.choices)
+    amount = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        verbose_name='Сумма'
+    )
+    type = models.CharField(
+        max_length=20,
+        choices=Type.choices,
+        verbose_name='Тип'
+    )
     status = models.CharField(
         max_length=20,
         choices=Status.choices,
-        default=Status.PENDING
+        default=Status.PENDING,
+        verbose_name='Статус'
     )
-    bank_payment_id = models.CharField(max_length=100, blank=True, null=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+    bank_payment_id = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        verbose_name='ID платежа'
+    )
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        verbose_name='Создан'
+    )
+    updated_at = models.DateTimeField(
+        auto_now=True,
+        verbose_name='Обновлен'
+    )
     bank_status = models.CharField(
         max_length=20,
         blank=True,
         null=True,
-        help_text="Статус платежа в системе банка"
+        help_text='Статус платежа в системе банка',
+        verbose_name='Статус платежа в банке'
     )
     last_synced_at = models.DateTimeField(
         blank=True,
         null=True,
-        help_text="Последняя синхронизация статуса с банком"
+        help_text='Последняя синхронизация статуса с банком',
+        verbose_name='Последняя синхронизация'
     )
     bank_amount = models.DecimalField(
         max_digits=10,
         decimal_places=2,
         blank=True,
         null=True,
-        help_text="Сумма платежа в системе банка"
+        help_text='Сумма платежа в системе банка',
+        verbose_name='Сумма платежа в банке'
     )
     bank_paid_at = models.DateTimeField(
         blank=True,
         null=True,
-        help_text="Дата и время оплаты в системе банка"
+        help_text='Дата и время оплаты в системе банка',
+        verbose_name='Дата и время оплаты'
     )
 
     def clean(self):
@@ -294,6 +328,10 @@ class Payment(models.Model):
         self.status = self.Status.REFUNDED
         self.save()
         self.order.update_status()
+
+    class Meta:
+        verbose_name = 'Платеж'
+        verbose_name_plural = 'Платежи'
 
     def __str__(self):
         return f'Payment {self.id} - {self.amount} - {self.get_status_display()}'

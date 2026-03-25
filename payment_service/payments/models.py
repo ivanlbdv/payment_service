@@ -6,6 +6,12 @@ from django.utils.dateparse import parse_datetime
 
 
 class Order(models.Model):
+    """
+    Модель заказа
+
+    Представляет заказ с суммой и статусом оплаты.
+    Статус автоматически обновляется на основе связанных платежей.
+    """
     class PaymentStatus(models.TextChoices):
         UNPAID = 'unpaid', 'Не оплачен'
         PARTIALLY_PAID = 'partially_paid', 'Частично оплачен'
@@ -37,6 +43,12 @@ class Order(models.Model):
 
 
 class Payment(models.Model):
+    """
+    Модель платежа
+
+    Представляет платеж, связанный с заказом. Поддерживает разные типы платежей
+    (наличные, эквайринг) и синхронизацию со сторонним платежным шлюзом.
+    """
     class Type(models.TextChoices):
         CASH = 'cash', 'Наличные'
         ACQUIRING = 'acquiring', 'Эквайринг'

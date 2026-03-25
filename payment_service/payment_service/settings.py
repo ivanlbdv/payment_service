@@ -41,6 +41,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'rest_framework',
     'payments',
+    'drf_spectacular',
 ]
 
 MIDDLEWARE = [
@@ -137,7 +138,21 @@ REST_FRAMEWORK = {
         'rest_framework.parsers.JSONParser',
     ],
     'EXCEPTION_HANDLER': 'rest_framework.views.exception_handler',
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
 }
 
 CELERY_BROKER_URL = 'redis://localhost:6379/0'
 CELERY_RESULT_BACKEND = 'redis://localhost:6379/0'
+
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'Payment Service API',
+    'DESCRIPTION': 'API для управления платежами и заказами',
+    'VERSION': '1.0.0',
+    'SERVE_INCLUDE_SCHEMA': False,
+    'SCHEMA_PATH_PREFIX': '/api/',
+    'ENUM_NAME_OVERRIDES': {
+        'PaymentStatusEnum': 'payments.models.Payment.Status.choices',
+        'OrderStatusEnum': 'payments.models.Order.PaymentStatus.choices',
+    },
+    'COMPONENT_SPLIT_REQUEST': True,
+}

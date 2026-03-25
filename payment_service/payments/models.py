@@ -1,8 +1,12 @@
+import logging
+
 import requests
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
+
+logger = logging.getLogger(__name__)
 
 
 class Order(models.Model):
@@ -149,6 +153,7 @@ class Payment(models.Model):
             )
 
     def _call_bank_api_acquiring_start(self):
+        logger.info('Вызов API банка для создания эквайрингового платежа. Order ID: %s, Amount: %s', self.order.id, self.amount)
         try:
             response = requests.post(
                 'http://bank.api/acquiring_start',
@@ -164,15 +169,19 @@ class Payment(models.Model):
             self.bank_status = 'pending'
             self.last_synced_at = timezone.now()
             self.save(update_fields=['bank_payment_id', 'bank_status', 'last_synced_at'])
+            logger.info('Успешный вызов API банка. Payment ID: %s', data['payment_id'])
             return {'success': True, 'payment_id': data['payment_id']}
         except requests.exceptions.RequestException as e:
+            logger.error('Ошибка вызова API банка для создания платежа. Order ID: %s. Ошибка: %s', self.order.id, str(e))
             return {'success': False, 'error': str(e)}
 
     def _call_bank_api_refund(self):
         """Вызов API банка для возврата платежа"""
         if not self.bank_payment_id:
+            logger.warning('Попытка возврата платежа без ID в банке. Payment ID: %s', self.id)
             return {'success': False, 'error': 'Нет ID платежа в банке'}
 
+        logger.info('Вызов API банка для возврата платежа. Bank Payment ID: %s', self.bank_payment_id)
         try:
             response = requests.post(
                 'http://bank.api/acquiring_refund',
@@ -180,19 +189,23 @@ class Payment(models.Model):
                 timeout=30
             )
             response.raise_for_status()
+            logger.info('Успешный возврат платежа в банке. Bank Payment ID: %s', self.bank_payment_id)
             return {'success': True}
         except requests.exceptions.RequestException as e:
+            logger.error('Ошибка вызова API банка для возврата платежа. Bank Payment ID: %s. Ошибка: %s', self.bank_payment_id, str(e))
             return {'success': False, 'error': str(e)}
 
     def _check_bank_payment_status(self):
         """Проверка статуса платежа в банке через acquiring_check"""
         if not self.bank_payment_id:
+            logger.warning('Попытка проверки статуса без ID платежа в банке. Payment ID: %s', self.id)
             return {
                 'success': False,
                 'error': 'Нет ID платежа в банке',
                 'bank_error_type': 'missing_payment_id'
             }
 
+        logger.info('Проверка статуса платежа в банке. Bank Payment ID: %s', self.bank_payment_id)
         try:
             response = requests.get(
                 f'http://bank.api/acquiring_check?payment_id={self.bank_payment_id}',
@@ -200,6 +213,7 @@ class Payment(models.Model):
             )
 
             if response.status_code == 404:
+                logger.warning('Платеж не найден в системе банка. Bank Payment ID: %s', self.bank_payment_id)
                 return {
                     'success': False,
                     'error': 'Платеж не найден в системе банка',
@@ -208,6 +222,11 @@ class Payment(models.Model):
 
             response.raise_for_status()
             data = response.json()
+
+            logger.info(
+                'Получен статус платежа от банка. Bank Payment ID: %s, Status: %s, Amount: %s',
+                self.bank_payment_id, data.get('status'), data.get('amount')
+            )
 
             self.bank_status = data.get('status')
             self.bank_amount = data.get('amount')
@@ -230,12 +249,20 @@ class Payment(models.Model):
                 'data': data
             }
         except requests.exceptions.RequestException as e:
+            logger.error(
+                'Ошибка связи с банком при проверке статуса. Bank Payment ID: %s. Ошибка: %s',
+                self.bank_payment_id, str(e)
+            )
             return {
                 'success': False,
                 'error': f'Ошибка связи с банком: {str(e)}',
                 'bank_error_type': 'connection_error'
             }
         except (KeyError, ValueError, TypeError) as e:
+            logger.error(
+                'Ошибка парсинга ответа банка. Bank Payment ID: %s. Ответ: %s. Ошибка: %s',
+                self.bank_payment_id, response.text if response else 'No response', str(e)
+            )
             return {
                 'success': False,
                 'error': f'Ошибка парсинга ответа банка: {str(e)}',
@@ -279,8 +306,10 @@ class Payment(models.Model):
             self.order.update_status()
 
         if self.bank_amount is not None and self.bank_amount != self.amount:
-            print(f'Предупреждение: расхождение сумм для платежа {self.id}. '
-                f'Локальная: {self.amount}, в банке: {self.bank_amount}')
+            logger.warning(
+                'Расхождение сумм для платежа %s: локальная сумма %s, сумма в банке %s',
+                self.id, self.amount, self.bank_amount
+            )
 
         return {
             'synced': True,
@@ -289,17 +318,20 @@ class Payment(models.Model):
 
     def deposit(self):
         if self.status != self.Status.PENDING:
+            logger.warning('Попытка создания депозита для платежа с некорректным статусом. Payment ID: %s, Current Status: %s', self.id, self.status)
             raise ValueError('Платеж уже обработан')
 
         if self.type == self.Type.ACQUIRING:
             bank_response = self._call_bank_api_acquiring_start()
             if not bank_response['success']:
+                logger.error('Не удалось создать платеж в банке. Payment ID: %s. Ошибка: %s', self.id, bank_response["error"])
                 self.status = self.Status.FAILED
                 self.save()
                 raise Exception(
                     f'Ошибка создания платежа в банке: {bank_response["error"]}'
                 )
         elif self.type == self.Type.CASH:
+            logger.info('Создание наличного платежа. Payment ID: %s', self.id)
             self.status = self.Status.COMPLETED
             self.bank_status = 'completed'
             self.bank_amount = self.amount
@@ -309,25 +341,46 @@ class Payment(models.Model):
                 'status', 'bank_status', 'bank_amount',
                 'bank_paid_at', 'last_synced_at'
             ])
+            logger.info(
+                'Наличный платеж успешно создан и обработан. Payment ID: %s, Amount: %s',
+                self.id, self.amount
+            )
         else:
-            raise ValueError(f'Неподдерживаемый тип платежа: {self.type}')
+            error_msg = f'Неподдерживаемый тип платежа: {self.type}'
+            logger.error('Попытка создания платежа с неподдерживаемым типом. Payment ID: %s, Type: %s', self.id, self.type)
+            raise ValueError(error_msg)
 
         self.order.update_status()
+        logger.info('Статус заказа обновлен после создания платежа. Order ID: %s, New Status: %s', self.order.id, self.order.status)
 
     def refund(self):
         if self.status != self.Status.COMPLETED:
+            logger.warning(
+                'Попытка возврата платежа с некорректным статусом. Payment ID: %s, Current Status: %s',
+                self.id, self.status
+            )
             raise ValueError('Можно вернуть только завершенные платежи')
+
+        logger.info('Инициирован возврат платежа. Payment ID: %s, Order ID: %s', self.id, self.order.id)
 
         if self.type == self.Type.ACQUIRING and self.bank_payment_id:
             bank_response = self._call_bank_api_refund()
             if not bank_response['success']:
+                logger.error(
+                    'Не удалось выполнить возврат платежа в банке. Payment ID: %s. Ошибка: %s',
+                    self.id, bank_response['error']
+                )
                 raise Exception(
                     f'Ошибка возврата платежа в банке: {bank_response["error"]}'
                 )
+            logger.info('Возврат платежа успешно выполнен в банке. Bank Payment ID: %s', self.bank_payment_id)
 
         self.status = self.Status.REFUNDED
         self.save()
+        logger.info('Платеж успешно возвращен. Payment ID: %s', self.id)
+
         self.order.update_status()
+        logger.info('Статус заказа обновлен после возврата платежа. Order ID: %s, New Status: %s', self.order.id, self.order.status)
 
     class Meta:
         verbose_name = 'Платеж'

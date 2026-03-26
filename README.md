@@ -272,10 +272,16 @@ ReDoc: http://localhost:8000/api/redoc/
 
 ## Тестирование
 
-- Для запуска тестов выполните:
+### Локальный запуск тестов
 
 ```bash
 python manage.py test
+```
+
+### Запуск тестов в контейнерах
+
+```bash
+docker-compose exec web python manage.py test
 ```
 
 Покрытие тестами:

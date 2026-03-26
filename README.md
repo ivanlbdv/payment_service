@@ -29,7 +29,7 @@ Payment Service - это веб‑сервис на базе Django REST Framewo
 
 ## Основные модели данных
 
-### Order (Заказ)
+### `Order` (Заказ)
 
 Поля:
 * `id` - уникальный идентификатор;
@@ -39,7 +39,7 @@ Payment Service - это веб‑сервис на базе Django REST Framewo
     * `partially_paid` (частично оплачен);
     * `paid` (оплачен).
 
-### Payment (Платеж)
+### `Payment` (Платеж)
 
 Поля:
 * `id` - уникальный идентификатор;
@@ -69,6 +69,7 @@ Payment Service - это веб‑сервис на базе Django REST Framewo
 * PostgreSQL
 * drf‑spectacular (генерация API‑документации)
 * python‑decouple (управление конфигурацией)
+* Docker + docker-compose
 
 ---
 
@@ -78,10 +79,13 @@ Payment Service - это веб‑сервис на базе Django REST Framewo
 
 * Python 3.10+
 * PostgreSQL 12+
+* Docker и Docker Compose (для запуска в контейнерах)
 
 ---
 
 ## Запуск проекта
+
+### Вариант 1. Локальный запуск (без контейнеров)
 
 - Клонируйте репозиторий и перейдите в папку проекта:
 
@@ -129,6 +133,85 @@ python manage.py createsuperuser
 ```bash
 python manage.py runserver
 ```
+
+- Откройте в браузере:
+
+* приложение: http://localhost:8000
+* Swagger UI: http://localhost:8000/api/docs/
+* ReDoc: http://localhost:8000/api/redoc/
+
+
+### Вариант 2. Запуск в контейнерах (Docker)
+
+- Клонируйте репозиторий и перейдите в папку проекта:
+
+```bash
+git clone git@github.com:ivanlbdv/payment_service.git
+cd payment_service
+```
+
+- Настройте переменные окружения: создайте файл .env в корне проекта со следующим содержимым:
+
+```env
+DB_NAME=payment_service
+DB_USER=your_user
+DB_PASSWORD=your_password
+DB_HOST=localhost
+DB_PORT=5432
+SECRET_KEY=your_secret_key
+DEBUG=True
+ALLOWED_HOSTS=localhost,127.0.0.1
+```
+
+- Убедитесь, что у вас есть файлы:
+
+* `docker-compose.yml` (конфигурация контейнеров);
+* `Dockerfile` (инструкция сборки образа);
+* `requirements.txt` (зависимости Python).
+
+- Остановите и удалите существующие контейнеры (если есть):
+
+```bash
+docker-compose down -v
+```
+
+- Пересоберите образы:
+
+```bash
+docker-compose build --no-cache
+```
+
+- Запустите контейнеры в фоновом режиме:
+
+```bash
+docker-compose up -d
+```
+
+- Дождитесь инициализации PostgreSQL (30–60 секунд). Проверьте статус:
+
+```bash
+docker-compose ps
+```
+
+Оба контейнера (`web` и `db`) должны быть в статусе `Up`.
+
+- Выполните миграции:
+
+```bash
+docker-compose exec web python manage.py migrate
+```
+
+- Создайте суперпользователя (опционально):
+
+```bash
+docker-compose exec web python manage.py createsuperuser
+```
+
+- Откройте в браузере:
+
+* приложение: http://localhost:8000
+* Swagger UI: http://localhost:8000/api/docs/
+* ReDoc: http://localhost:8000/api/redoc/
 
 ---
 

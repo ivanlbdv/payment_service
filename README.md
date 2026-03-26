@@ -67,8 +67,6 @@ Payment Service - это веб‑сервис на базе Django REST Framewo
 * Django 5.2.12
 * Django REST Framework 3.17.1
 * PostgreSQL
-* Redis (для Celery)
-* Celery (планировщик задач)
 * drf‑spectacular (генерация API‑документации)
 * python‑decouple (управление конфигурацией)
 
@@ -80,7 +78,6 @@ Payment Service - это веб‑сервис на базе Django REST Framewo
 
 * Python 3.10+
 * PostgreSQL 12+
-* Redis 6+
 
 ---
 
@@ -131,12 +128,6 @@ python manage.py createsuperuser
 
 ```bash
 python manage.py runserver
-```
-
-- Запустите Celery (если используются асинхронные задачи):
-
-```bash
-celery -A payment_service worker -l INFO
 ```
 
 ---
@@ -206,10 +197,9 @@ python manage.py test
 
 Покрытие тестами:
 
-1) модели (Order, Payment) - валидация полей, бизнес‑правила;
+1) модели (`Order`, `Payment`) - валидация полей, бизнес‑правила;
 2) API‑эндпоинты - создание, возврат платежей, получение заказов;
-3) Celery‑задачи - синхронизация статусов с банком;
-4) админ‑панель - отображение и фильтрация данных.
+3) админ‑панель - отображение и фильтрация данных.
 
 ---
 

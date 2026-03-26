@@ -160,7 +160,7 @@ DB_HOST=db
 DB_PORT=5432
 SECRET_KEY=your_secret_key
 DEBUG=True
-ALLOWED_HOSTS=localhost,127.0.0.1
+ALLOWED_HOSTS=localhost,127.0.0.1,0.0.0.0
 ```
 
 - Убедитесь, что у вас есть файлы:

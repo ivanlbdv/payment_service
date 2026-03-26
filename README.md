@@ -156,7 +156,7 @@ cd payment_service
 DB_NAME=payment_service
 DB_USER=your_user
 DB_PASSWORD=your_password
-DB_HOST=localhost
+DB_HOST=db
 DB_PORT=5432
 SECRET_KEY=your_secret_key
 DEBUG=True

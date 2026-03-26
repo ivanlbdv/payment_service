@@ -81,7 +81,7 @@ class PaymentViewsTest(APITestCase):
         )
         self.assertEqual(response.status_code, 400)
         error_messages = str(response.data)
-        self.assertIn('превышает доступную', error_messages)
+        self.assertIn('Сумма платежа превышает доступную', error_messages)
 
     def test_refund_payment_success(self):
         """Успешный возврат платежа"""
@@ -122,4 +122,4 @@ class PaymentViewsTest(APITestCase):
         )
         self.assertEqual(response.status_code, 400)
         error_messages = str(response.data)
-        self.assertIn('только для завершенных', error_messages)
+        self.assertIn('Возврат возможен только для завершенных платежей', error_messages)

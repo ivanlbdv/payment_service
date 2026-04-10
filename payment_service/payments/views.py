@@ -1,3 +1,4 @@
+from django.db import models
 from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import (OpenApiParameter, OpenApiResponse,
                                    extend_schema, inline_serializer)
@@ -5,7 +6,7 @@ from rest_framework import serializers, status
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
-from .models import Order
+from .models import Order, Payment
 from .serializers import (OrderSerializer, PaymentCreateSerializer,
                           PaymentRefundSerializer, PaymentSerializer)
 
@@ -34,7 +35,18 @@ from .serializers import (OrderSerializer, PaymentCreateSerializer,
 def order_detail(request, order_id):
     """Получение информации о заказе с платежами"""
     order = get_object_or_404(
-        Order.objects.prefetch_related('payments'),
+        Order.objects
+        .prefetch_related(
+            'payments'
+        )
+        .annotate(
+            total_paid=models.Sum(
+                'payments__amount',
+                filter=models.Q(
+                    payments__status=Payment.Status.COMPLETED
+                )
+            )
+        ),
         id=order_id
     )
     serializer = OrderSerializer(order)

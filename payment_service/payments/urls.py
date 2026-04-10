@@ -9,6 +9,11 @@ urlpatterns = [
         name='order-detail'
     ),
     path(
+        'orders/<int:order_id>/sync/',
+        views.sync_order_payments,
+        name='sync-order-payments'
+    ),
+    path(
         'orders/<int:order_id>/payments/',
         views.create_payment,
         name='create-payment'

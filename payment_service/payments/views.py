@@ -1,18 +1,19 @@
 from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import (OpenApiParameter, OpenApiResponse,
                                    extend_schema, inline_serializer)
-from rest_framework import status
-from rest_framework.decorators import api_view, schema
+from rest_framework import serializers, status
+from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
-from .models import Order, Payment
+from .models import Order
 from .serializers import (OrderSerializer, PaymentCreateSerializer,
                           PaymentRefundSerializer, PaymentSerializer)
 
 
 @extend_schema(
     summary="Получить информацию о заказе",
-    description="Возвращает детали заказа с информацией обо всех связанных платежах и статусами синхронизации с банком",
+    description="Возвращает детали заказа с информацией обо всех связанных платежах. "
+                "Для актуальной синхронизации статусов используйте эндпоинт синхронизации.",
     responses={
         200: OrderSerializer,
         404: OpenApiResponse(
@@ -31,21 +32,13 @@ from .serializers import (OrderSerializer, PaymentCreateSerializer,
 )
 @api_view(['GET'])
 def order_detail(request, order_id):
-    """Получение информации о заказе с платежами и статусами синхронизации"""
-    order = get_object_or_404(Order, id=order_id)
+    """Получение информации о заказе с платежами"""
+    order = get_object_or_404(
+        Order.objects.prefetch_related('payments'),
+        id=order_id
+    )
     serializer = OrderSerializer(order)
-
-    response_data = serializer.data
-
-    for payment_data in response_data['payments']:
-        payment = Payment.objects.get(id=payment_data['id'])
-        sync_result = payment.sync_with_bank()
-
-        if not sync_result['synced']:
-            payment_data['sync_error'] = sync_result['error']
-            payment_data['bank_error_type'] = sync_result.get('bank_error_type')
-
-    return Response(response_data)
+    return Response(serializer.data)
 
 
 @extend_schema(
@@ -134,3 +127,64 @@ def refund_payment(request):
         }, status=status.HTTP_200_OK)
 
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@extend_schema(
+    summary="Синхронизировать платежи заказа с банком",
+    description="Принудительно синхронизирует статусы всех платежей заказа с банком. "
+                "Возвращает результаты синхронизации для каждого платежа.",
+    responses={
+        200: inline_serializer(
+            name='SyncResult',
+            fields={
+                'results': serializers.ListField(child=serializers.DictField()),
+                'synced_count': serializers.IntegerField(),
+                'error_count': serializers.IntegerField()
+            }
+        ),
+        404: OpenApiResponse(description="Заказ не найден")
+    },
+    parameters=[
+        OpenApiParameter(
+            name="order_id",
+            type=int,
+            location=OpenApiParameter.PATH,
+            description="ID заказа"
+        )
+    ]
+)
+@api_view(['POST'])
+def sync_order_payments(request, order_id):
+    """
+    Принудительная синхронизация всех платежей заказа с банком.
+    Обновляет статусы, суммы и даты оплаты из банковской системы.
+    """
+    order = get_object_or_404(Order, id=order_id)
+    payments = order.payments.all()
+    results = []
+    synced_count = 0
+    error_count = 0
+
+    for payment in payments:
+        sync_result = payment.sync_with_bank()
+        results.append({
+            'payment_id': payment.id,
+            'synced': sync_result['synced'],
+            'error': sync_result.get('error'),
+            'bank_error_type': sync_result.get('bank_error_type'),
+            'current_status': payment.status,
+            'bank_status': payment.bank_status
+        })
+
+        if sync_result['synced']:
+            synced_count += 1
+        else:
+            error_count += 1
+
+    order.update_status()
+
+    return Response({
+        'results': results,
+        'synced_count': synced_count,
+        'error_count': error_count
+    })
